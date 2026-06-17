@@ -11,6 +11,7 @@ float cl = args.Length > 3 ? float.Parse(args[3]) : 0.30f;
 float ct = args.Length > 4 ? float.Parse(args[4]) : 0.11f;
 float cr = args.Length > 5 ? float.Parse(args[5]) : 0.74f;
 float cb = args.Length > 6 ? float.Parse(args[6]) : 0.37f;
+bool recolor = args.Any(a => a.Equals("recolor", StringComparison.OrdinalIgnoreCase));
 
 string outDir = Path.GetDirectoryName(Path.GetFullPath(appIco))!;
 Directory.CreateDirectory(outDir);
@@ -20,6 +21,7 @@ var work = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
 using (var g = Graphics.FromImage(work)) g.DrawImageUnscaled(src, 0, 0);
 
 RemoveBackground(work);
+if (recolor) RecolorBoxers(work);
 work.Save(Path.Combine(outDir, "_full_preview.png"), ImageFormat.Png);
 
 // App icon: trim to content, emit multi-res.
@@ -77,6 +79,34 @@ static void RemoveBackground(Bitmap bmp)
     }
 
     Marshal.Copy(buf, 0, data.Scan0, bytes);
+    bmp.UnlockBits(data);
+}
+
+// Boxers blue -> white, and the strawberry leaves green -> red (so the berries become
+// solid red heart-ish blobs). Color-targeted so it only touches those regions.
+static void RecolorBoxers(Bitmap bmp)
+{
+    int w = bmp.Width, h = bmp.Height;
+    var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+    byte[] buf = new byte[data.Stride * h];
+    Marshal.Copy(data.Scan0, buf, 0, buf.Length);
+
+    for (int i = 0; i < buf.Length; i += 4)
+    {
+        byte b = buf[i], g = buf[i + 1], r = buf[i + 2], a = buf[i + 3];
+        if (a < 8) continue;
+
+        if (b > r + 25 && b > g + 12 && b > 100)        // blue boxer -> white
+        {
+            buf[i] = 236; buf[i + 1] = 238; buf[i + 2] = 240;
+        }
+        else if (g > r + 20 && g > b + 20 && g > 80)    // green leaf -> berry red
+        {
+            buf[i] = 44; buf[i + 1] = 44; buf[i + 2] = 200;
+        }
+    }
+
+    Marshal.Copy(buf, 0, data.Scan0, buf.Length);
     bmp.UnlockBits(data);
 }
 
