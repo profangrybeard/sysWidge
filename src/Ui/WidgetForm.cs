@@ -65,6 +65,10 @@ public sealed class WidgetForm : Form
     private List<Segment> _segments = new();
     private Bitmap? _measureBmp;
     private Graphics? _measure;
+    private Bitmap? _surface;                                  // reused render target
+    private readonly SolidBrush _brush = new(Color.White);     // reused text brush
+    private readonly SolidBrush _hitBrush = new(Color.FromArgb(4, 0, 0, 0));
+    private int _trimCounter;
     private Font _valueFont = null!;
     private Font _labelFont = null!;
 
@@ -138,10 +142,10 @@ public sealed class WidgetForm : Form
     {
         base.OnLoad(e);
         EnsureDocked();
-        OnSample();
+        OnSample();              // populates events; SyncAgenda starts the crossfade timer if needed
         _sampleTimer.Start();
         _dockTimer.Start();
-        _agendaTimer.Start();
+        TrimWorkingSet();        // drop the startup allocation spike
     }
 
     // A layered window paints via UpdateLayeredWindow, not WM_PAINT.
@@ -267,6 +271,14 @@ public sealed class WidgetForm : Form
         _lastSnapshot = _sampler.Sample();
         SyncAgenda(_lastSnapshot.Events);
         RebuildAndRender();
+
+        if (++_trimCounter >= 30) { _trimCounter = 0; TrimWorkingSet(); } // ~every 30s
+    }
+
+    private static void TrimWorkingSet()
+    {
+        try { NativeMethods.EmptyWorkingSet(NativeMethods.GetCurrentProcess()); }
+        catch { /* best-effort */ }
     }
 
     private void RebuildAndRender()
@@ -290,6 +302,10 @@ public sealed class WidgetForm : Form
         _calPhaseMs = 0;
         _calTransitioning = false;
         _calSwitched = false;
+
+        // Only run the 40ms crossfade timer when there's something to cycle.
+        if (_calEvents.Count > 1) _agendaTimer.Start();
+        else _agendaTimer.Stop();
     }
 
     /// <summary>Drives the gentle crossfade between the day's events.</summary>
@@ -402,9 +418,15 @@ public sealed class WidgetForm : Form
     {
         if (_w <= 0 || _h <= 0) return;
 
-        using var bmp = new Bitmap(_w, _h, PixelFormat.Format32bppArgb);
-        bmp.SetResolution(96, 96);
-        using (var g = Graphics.FromImage(bmp))
+        // Reuse the render target; only reallocate when the size changes.
+        if (_surface is null || _surface.Width != _w || _surface.Height != _h)
+        {
+            _surface?.Dispose();
+            _surface = new Bitmap(_w, _h, PixelFormat.Format32bppArgb);
+            _surface.SetResolution(96, 96);
+        }
+
+        using (var g = Graphics.FromImage(_surface))
         {
             g.Clear(Color.Transparent);
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -412,7 +434,7 @@ public sealed class WidgetForm : Form
             RenderOrMeasure(g);
         }
 
-        PushLayered(bmp);
+        PushLayered(_surface);
     }
 
     private void PushLayered(Bitmap bmp)
@@ -489,8 +511,7 @@ public sealed class WidgetForm : Form
                 if (g is not null)
                 {
                     // Faint hit pad (alpha>0) so the whole tile is clickable, not just glyph pixels.
-                    using var hit = new SolidBrush(Color.FromArgb(4, 0, 0, 0));
-                    g.FillRectangle(hit, _calHitX, 0, slotW, _h);
+                    g.FillRectangle(_hitBrush, _calHitX, 0, slotW, _h);
                     DrawClipped(g, seg.Value, _valueFont, seg.Color, _calHitX, slotW);
                 }
             }
@@ -520,8 +541,8 @@ public sealed class WidgetForm : Form
     {
         float th = g.MeasureString(text, font, int.MaxValue, TightFormat).Height;
         float y = (_h - th) / 2f;
-        using var brush = new SolidBrush(color);
-        g.DrawString(text, font, brush, new PointF(x, y), TightFormat);
+        _brush.Color = color;
+        g.DrawString(text, font, _brush, new PointF(x, y), TightFormat);
     }
 
     /// <summary>Left-aligned text clipped to a fixed pixel width, with an ellipsis.</summary>
@@ -529,8 +550,8 @@ public sealed class WidgetForm : Form
     {
         float th = g.MeasureString("Ag", font, int.MaxValue, ClipFormat).Height;
         float y = (_h - th) / 2f;
-        using var brush = new SolidBrush(color);
-        g.DrawString(text, font, brush, new RectangleF(x, y, widthPx, th + 2), ClipFormat);
+        _brush.Color = color;
+        g.DrawString(text, font, _brush, new RectangleF(x, y, widthPx, th + 2), ClipFormat);
     }
 
     // ----------------------------------------------------------- helpers
@@ -739,6 +760,9 @@ public sealed class WidgetForm : Form
             _icon?.Dispose();
             _measure?.Dispose();
             _measureBmp?.Dispose();
+            _surface?.Dispose();
+            _brush.Dispose();
+            _hitBrush.Dispose();
             _valueFont?.Dispose();
             _labelFont?.Dispose();
         }

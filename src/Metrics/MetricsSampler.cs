@@ -25,6 +25,9 @@ public sealed class MetricsSampler : IDisposable
     private readonly TempSampler _temp = new();
     private readonly CalendarSampler? _calendar;
 
+    private double? _cachedGpuTemp;
+    private int _tempCounter;
+
     public MetricsSampler(Config.WidgetConfig config)
     {
         var feeds = config.AllCalendarFeeds();
@@ -37,7 +40,10 @@ public sealed class MetricsSampler : IDisposable
         var (memPct, memUsed, memTotal) = SampleMemory();
         var (down, up) = SampleNetwork();
         var (gpuLoad, vramUsed, vramTotal) = _gpu.Sample();
-        var gpuTemp = _temp.Sample();
+
+        // Temps move slowly — poll LHM every ~3rd sample to cut its allocations.
+        if (_tempCounter++ % 3 == 0) _cachedGpuTemp = _temp.Sample();
+        var gpuTemp = _cachedGpuTemp;
 
         return new MetricsSnapshot
         {

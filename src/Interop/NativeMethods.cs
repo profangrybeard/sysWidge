@@ -39,6 +39,14 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr hIcon);
 
+    // Return idle resident pages to the OS (keeps a mostly-idle widget's footprint small).
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("psapi.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EmptyWorkingSet(IntPtr hProcess);
+
     // x64: the IntPtr-width long get/set window style calls.
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
