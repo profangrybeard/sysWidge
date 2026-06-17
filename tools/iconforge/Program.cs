@@ -78,6 +78,16 @@ static void RemoveBackground(Bitmap bmp)
         if (y < h - 1) Seed(x, y + 1);
     }
 
+    // Clear enclosed white pockets the border fill couldn't reach (e.g. the gap
+    // between the arm and hip). Safe here: this runs before the boxer recolor, so
+    // nothing in the figure is near-white yet — only trapped background remains.
+    for (int p = 0; p < w * h; p++)
+    {
+        int o = (p / w) * stride + (p % w) * 4;
+        if (buf[o + 3] != 0 && buf[o] >= 248 && buf[o + 1] >= 248 && buf[o + 2] >= 248)
+            buf[o + 3] = 0;
+    }
+
     Marshal.Copy(buf, 0, data.Scan0, bytes);
     bmp.UnlockBits(data);
 }
