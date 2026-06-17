@@ -31,8 +31,14 @@ public sealed record MetricsSnapshot
     /// so external/USB drives appear and disappear as they're plugged/unplugged.</summary>
     public IReadOnlyList<DriveReading> Disks { get; init; } = Array.Empty<DriveReading>();
 
+    /// <summary>Today's upcoming events (or the next event if today is empty); empty if no ICS.</summary>
+    public IReadOnlyList<CalEvent> Events { get; init; } = Array.Empty<CalEvent>();
+
     public DateTime Time { get; init; } = DateTime.Now;
 }
 
 /// <summary>Free/total space for one drive (e.g. "C").</summary>
 public sealed record DriveReading(string Letter, double FreeGb, double TotalGb);
+
+/// <summary>An upcoming calendar event. <paramref name="ColorHex"/> is its feed's color.</summary>
+public sealed record CalEvent(DateTime Start, string Title, bool AllDay, string ColorHex = "");

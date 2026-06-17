@@ -23,6 +23,14 @@ public sealed class MetricsSampler : IDisposable
 
     private readonly GpuSampler _gpu = new();
     private readonly TempSampler _temp = new();
+    private readonly CalendarSampler? _calendar;
+
+    public MetricsSampler(Config.WidgetConfig config)
+    {
+        var feeds = config.AllCalendarFeeds();
+        if (feeds.Count > 0)
+            _calendar = new CalendarSampler(feeds, config.CalendarRefreshMinutes, config.CalendarLookaheadDays);
+    }
 
     public MetricsSnapshot Sample()
     {
@@ -48,6 +56,7 @@ public sealed class MetricsSampler : IDisposable
             NetDownBytesPerSec = down,
             NetUpBytesPerSec = up,
             Disks = SampleDisks(),
+            Events = _calendar?.Snapshot() ?? Array.Empty<CalEvent>(),
             Time = DateTime.Now,
         };
     }
@@ -56,6 +65,7 @@ public sealed class MetricsSampler : IDisposable
     {
         _gpu.Dispose();
         _temp.Dispose();
+        _calendar?.Dispose();
     }
 
     private double SampleCpu()

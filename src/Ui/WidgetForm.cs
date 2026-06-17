@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using SysWidge.Config;
 using SysWidge.Hosting;
@@ -23,11 +24,15 @@ namespace SysWidge.Ui;
 public sealed class WidgetForm : Form
 {
     /// <summary><paramref name="Template"/> is the widest value this slot can ever show;
-    /// it fixes the slot width so changing values never reflow the layout.</summary>
-    private readonly record struct Segment(string Label, string Value, string Template, Color Color);
+    /// it fixes the slot width so changing values never reflow the layout.
+    /// <paramref name="FixedSlotPx"/> (&gt;0) overrides that with a fixed device-independent
+    /// width whose value is left-aligned and ellipsis-clipped (for free-text like an event).
+    /// <paramref name="Tight"/> hugs this segment to the previous one with a smaller gap.</summary>
+    private readonly record struct Segment(
+        string Label, string Value, string Template, Color Color, int FixedSlotPx = 0, bool Tight = false);
 
-    private readonly WidgetConfig _config;
-    private readonly MetricsSampler _sampler = new();
+    private WidgetConfig _config;
+    private MetricsSampler _sampler;
     private readonly System.Windows.Forms.Timer _sampleTimer = new();
     private readonly System.Windows.Forms.Timer _dockTimer = new();
     private readonly NotifyIcon _tray;
@@ -41,6 +46,22 @@ public sealed class WidgetForm : Form
     // Current on-screen rect (physical pixels), recomputed when docking.
     private int _x, _y, _w = 220, _h = 48;
 
+    // Click target for the agenda tile (window-client px); _calHitW == 0 means no tile.
+    private int _calHitX, _calHitW;
+    private string _calLaunchUrl = "";
+
+    // Agenda cycling/crossfade state.
+    private const int AgendaIntervalMs = 40;
+    private readonly System.Windows.Forms.Timer _agendaTimer = new();
+    private MetricsSnapshot? _lastSnapshot;
+    private IReadOnlyList<CalEvent> _calEvents = Array.Empty<CalEvent>();
+    private string _calEventsKey = "";
+    private int _calIndex;
+    private float _calAlpha = 1f;
+    private int _calPhaseMs;
+    private bool _calTransitioning;
+    private bool _calSwitched;
+
     private List<Segment> _segments = new();
     private Bitmap? _measureBmp;
     private Graphics? _measure;
@@ -49,12 +70,15 @@ public sealed class WidgetForm : Form
 
     private Color _labelColor;
     private Color _accentColor;
+    private Color _calendarColor;
 
     private static readonly StringFormat TightFormat = CreateTightFormat();
 
     public WidgetForm(WidgetConfig config)
     {
         _config = config;
+        _sampler = new MetricsSampler(config);
+        _calLaunchUrl = config.CalendarLaunchUrl;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -65,6 +89,7 @@ public sealed class WidgetForm : Form
 
         _labelColor = ParseColor(_config.LabelColorHex, Color.Gray);
         _accentColor = ParseColor(_config.AccentColorHex, Color.DeepSkyBlue);
+        _calendarColor = ParseColor(_config.CalendarColorHex, Color.Goldenrod);
 
         RebuildFonts(96);
 
@@ -73,6 +98,9 @@ public sealed class WidgetForm : Form
 
         _dockTimer.Interval = 1000;
         _dockTimer.Tick += (_, _) => EnsureDocked();
+
+        _agendaTimer.Interval = AgendaIntervalMs;
+        _agendaTimer.Tick += (_, _) => OnAgendaTick();
 
         _tray = BuildTray();
     }
@@ -87,10 +115,12 @@ public sealed class WidgetForm : Form
         get
         {
             var cp = base.CreateParams;
+            // No WS_EX_TRANSPARENT: a per-pixel-alpha layered window hit-tests by alpha, so
+            // transparent gaps stay click-through while content (and the agenda tile's faint
+            // hit pad) receives clicks.
             cp.ExStyle |= (int)(NativeMethods.WS_EX_TOOLWINDOW
                               | NativeMethods.WS_EX_NOACTIVATE
-                              | NativeMethods.WS_EX_LAYERED
-                              | NativeMethods.WS_EX_TRANSPARENT);
+                              | NativeMethods.WS_EX_LAYERED);
             return cp;
         }
     }
@@ -111,11 +141,40 @@ public sealed class WidgetForm : Form
         OnSample();
         _sampleTimer.Start();
         _dockTimer.Start();
+        _agendaTimer.Start();
     }
 
     // A layered window paints via UpdateLayeredWindow, not WM_PAINT.
     protected override void OnPaint(PaintEventArgs e) { /* intentionally empty */ }
     protected override void OnPaintBackground(PaintEventArgs e) { /* intentionally empty */ }
+
+    private bool OverAgenda(int xClient) => _calHitW > 0 && xClient >= _calHitX && xClient < _calHitX + _calHitW;
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        Cursor = OverAgenda(e.X) ? Cursors.Hand : Cursors.Default;
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left && OverAgenda(e.X))
+            OpenUrl(_calLaunchUrl);
+    }
+
+    private static void OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // no browser / bad URL — ignore
+        }
+    }
 
     // ----------------------------------------------------------- docking
 
@@ -205,10 +264,71 @@ public sealed class WidgetForm : Form
 
     private void OnSample()
     {
-        var snapshot = _sampler.Sample();
-        _segments = BuildSegments(snapshot);
+        _lastSnapshot = _sampler.Sample();
+        SyncAgenda(_lastSnapshot.Events);
+        RebuildAndRender();
+    }
+
+    private void RebuildAndRender()
+    {
+        if (_lastSnapshot is null) return;
+        _segments = BuildSegments(_lastSnapshot);
         _w = RenderOrMeasure(null);
         if (!_hiddenForFullscreen) Relayout();
+    }
+
+    /// <summary>Adopt a new event list only when it actually changes, so cycling/index aren't reset every second.</summary>
+    private void SyncAgenda(IReadOnlyList<CalEvent> events)
+    {
+        string key = string.Join("|", events.Select(e => $"{e.Start.Ticks}:{e.Title}"));
+        if (key == _calEventsKey) return;
+
+        _calEventsKey = key;
+        _calEvents = events;
+        _calIndex = 0;
+        _calAlpha = 1f;
+        _calPhaseMs = 0;
+        _calTransitioning = false;
+        _calSwitched = false;
+    }
+
+    /// <summary>Drives the gentle crossfade between the day's events.</summary>
+    private void OnAgendaTick()
+    {
+        if (_calEvents.Count <= 1) return; // nothing to cycle
+
+        int dwell = Math.Max(1500, _config.CalendarCycleSeconds * 1000);
+        int fadeOut = Math.Max(60, _config.CalendarFadeOutMs);
+        int fadeIn = Math.Max(60, _config.CalendarFadeInMs);
+        _calPhaseMs += AgendaIntervalMs;
+
+        if (!_calTransitioning)
+        {
+            if (_calPhaseMs < dwell) return;     // hold the current event, no redraw needed
+            _calTransitioning = true;
+            _calSwitched = false;
+            _calPhaseMs = 0;
+        }
+
+        if (_calPhaseMs <= fadeOut)
+        {
+            _calAlpha = 1f - (float)_calPhaseMs / fadeOut;       // gentle fade out
+        }
+        else
+        {
+            if (!_calSwitched) { _calIndex = (_calIndex + 1) % _calEvents.Count; _calSwitched = true; }
+            _calAlpha = Math.Min(1f, (float)(_calPhaseMs - fadeOut) / fadeIn); // quicker fade in
+        }
+
+        if (_calPhaseMs >= fadeOut + fadeIn)
+        {
+            _calTransitioning = false;
+            _calPhaseMs = 0;
+            _calAlpha = 1f;
+            _calSwitched = false;
+        }
+
+        RebuildAndRender();
     }
 
     private List<Segment> BuildSegments(MetricsSnapshot s)
@@ -223,7 +343,7 @@ public sealed class WidgetForm : Form
             list.Add(new Segment("GPU", $"{s.GpuPercent:0}%", "100%", LoadColor(s.GpuPercent)));
             // GPU temp rides as a label-less segment that hugs the load reading (tight gap).
             if (s.GpuTempAvailable)
-                list.Add(new Segment("", $"{s.GpuTempC:0}°", "199°", TempColor(s.GpuTempC)));
+                list.Add(new Segment("", $"{s.GpuTempC:0}°", "199°", TempColor(s.GpuTempC), Tight: true));
         }
 
         list.Add(new Segment("MEM", $"{s.MemPercent:0}%", "100%", LoadColor(s.MemPercent)));
@@ -242,7 +362,37 @@ public sealed class WidgetForm : Form
         foreach (var d in s.Disks)
             list.Add(new Segment($"{d.Letter}:", DiskFree(d.FreeGb), "99.9T", _accentColor));
 
+        // Agenda tile (rightmost): the currently-cycled event in a fixed slot, ellipsis-clipped.
+        // Alpha is driven by the crossfade so it gently dissolves between the day's events.
+        if (_calEvents.Count > 0)
+        {
+            var ev = _calEvents[Math.Min(_calIndex, _calEvents.Count - 1)];
+            Color baseColor = string.IsNullOrEmpty(ev.ColorHex) ? _calendarColor : ParseColor(ev.ColorHex, _calendarColor);
+            int a = (int)Math.Round(Math.Clamp(_calAlpha, 0f, 1f) * 255);
+            var color = Color.FromArgb(a, baseColor);
+            list.Add(new Segment("", FormatEvent(ev), "", color, FixedSlotPx: _config.CalendarWidthPx));
+        }
+
         return list;
+    }
+
+    private static string FormatEvent(CalEvent e)
+    {
+        string day = DayPrefix(e.Start.Date);
+        if (e.AllDay)
+            return day.Length == 0 ? e.Title : $"{day}  {e.Title}";
+
+        string time = e.Start.ToString("h:mmt").ToLowerInvariant(); // 3:00p
+        return day.Length == 0 ? $"{time}  {e.Title}" : $"{day} {time}  {e.Title}";
+    }
+
+    /// <summary>"" for today, "tmrw" for tomorrow, else the weekday abbreviation.</summary>
+    private static string DayPrefix(DateTime date)
+    {
+        int d = (date.Date - DateTime.Now.Date).Days;
+        if (d <= 0) return "";
+        if (d == 1) return "tmrw";
+        return date.ToString("ddd");
     }
 
     // ----------------------------------------------------------- rendering
@@ -316,6 +466,7 @@ public sealed class WidgetForm : Form
         int segGap = Scale(14);
         int labelGap = Scale(4);
         int x = padX;
+        _calHitW = 0; // recomputed below if an agenda tile is present
 
         for (int i = 0; i < _segments.Count; i++)
         {
@@ -328,21 +479,35 @@ public sealed class WidgetForm : Form
                 if (g is not null) DrawAt(g, seg.Label, _labelFont, _labelColor, x);
             }
 
-            int slotW = (int)Math.Ceiling(Measure(ctx, seg.Template, _valueFont));
-            if (g is not null)
+            int slotW;
+            if (seg.FixedSlotPx > 0)
             {
-                float valueW = Measure(ctx, seg.Value, _valueFont);
-                float vx = x + labelW + (slotW - valueW); // right-align within the slot
-                DrawAt(g, seg.Value, _valueFont, seg.Color, vx);
+                // Free-text slot (e.g. an event title): fixed width, left-aligned, clipped.
+                slotW = Scale(seg.FixedSlotPx);
+                _calHitX = x + labelW;
+                _calHitW = slotW;
+                if (g is not null)
+                {
+                    // Faint hit pad (alpha>0) so the whole tile is clickable, not just glyph pixels.
+                    using var hit = new SolidBrush(Color.FromArgb(4, 0, 0, 0));
+                    g.FillRectangle(hit, _calHitX, 0, slotW, _h);
+                    DrawClipped(g, seg.Value, _valueFont, seg.Color, _calHitX, slotW);
+                }
+            }
+            else
+            {
+                slotW = (int)Math.Ceiling(Measure(ctx, seg.Template, _valueFont));
+                if (g is not null)
+                {
+                    float valueW = Measure(ctx, seg.Value, _valueFont);
+                    float vx = x + labelW + (slotW - valueW); // right-align within the slot
+                    DrawAt(g, seg.Value, _valueFont, seg.Color, vx);
+                }
             }
 
             x += labelW + slotW;
             if (i < _segments.Count - 1)
-            {
-                // A label-less follower (e.g. a temp) hugs its metric with a tighter gap.
-                bool nextIsFollower = _segments[i + 1].Label.Length == 0;
-                x += nextIsFollower ? Scale(7) : segGap;
-            }
+                x += _segments[i + 1].Tight ? Scale(7) : segGap; // temps hug their metric
         }
 
         return x + padX;
@@ -359,9 +524,24 @@ public sealed class WidgetForm : Form
         g.DrawString(text, font, brush, new PointF(x, y), TightFormat);
     }
 
+    /// <summary>Left-aligned text clipped to a fixed pixel width, with an ellipsis.</summary>
+    private void DrawClipped(Graphics g, string text, Font font, Color color, float x, int widthPx)
+    {
+        float th = g.MeasureString("Ag", font, int.MaxValue, ClipFormat).Height;
+        float y = (_h - th) / 2f;
+        using var brush = new SolidBrush(color);
+        g.DrawString(text, font, brush, new RectangleF(x, y, widthPx, th + 2), ClipFormat);
+    }
+
     // ----------------------------------------------------------- helpers
 
     private int Scale(int px) => (int)Math.Round(px * _dpiScale);
+
+    private static string VersionString()
+    {
+        var v = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+        return $"{v.Major}.{v.Minor}.{v.Build}";
+    }
 
     private void RebuildFonts(uint dpi)
     {
@@ -414,6 +594,17 @@ public sealed class WidgetForm : Form
         return sf;
     }
 
+    // Single-line, ellipsis-trimmed, clipped to the layout rectangle (for free text).
+    private static readonly StringFormat ClipFormat = CreateClipFormat();
+
+    private static StringFormat CreateClipFormat()
+    {
+        var sf = (StringFormat)StringFormat.GenericTypographic.Clone();
+        sf.FormatFlags |= StringFormatFlags.NoWrap;
+        sf.Trimming = StringTrimming.EllipsisCharacter;
+        return sf;
+    }
+
     // ----------------------------------------------------------- tray
 
     private NotifyIcon BuildTray()
@@ -429,7 +620,9 @@ public sealed class WidgetForm : Form
         startup.CheckedChanged += (_, _) => AutoStartManager.SetEnabled(startup.Checked);
         menu.Items.Add(startup);
 
-        menu.Items.Add("Open config folder", null, (_, _) => OpenConfigFolder());
+        menu.Items.Add(BuildLookaheadMenu());
+        menu.Items.Add("Edit config", null, (_, _) => OpenConfig());
+        menu.Items.Add("Reload config", null, (_, _) => ReloadConfig());
         menu.Items.Add("About SysWidge", null, (_, _) => ShowAbout());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
@@ -438,7 +631,7 @@ public sealed class WidgetForm : Form
         return new NotifyIcon
         {
             Icon = _icon,
-            Text = "SysWidge",
+            Text = $"SysWidge v{VersionString()}",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -450,21 +643,78 @@ public sealed class WidgetForm : Form
         about.ShowDialog();
     }
 
-    private static void OpenConfigFolder()
+    private ToolStripMenuItem BuildLookaheadMenu()
+    {
+        var root = new ToolStripMenuItem("Agenda look-ahead");
+        for (int d = 0; d <= 7; d++)
+        {
+            int days = d;
+            var item = new ToolStripMenuItem(days == 0 ? "Today only" : $"+{days} day{(days == 1 ? "" : "s")}");
+            item.Click += (_, _) => SetLookahead(days);
+            root.DropDownItems.Add(item);
+        }
+        // Reflect the current value each time the submenu opens.
+        root.DropDownOpening += (_, _) =>
+        {
+            for (int d = 0; d < root.DropDownItems.Count; d++)
+                ((ToolStripMenuItem)root.DropDownItems[d]).Checked = _config.CalendarLookaheadDays == d;
+        };
+        return root;
+    }
+
+    private void SetLookahead(int days)
+    {
+        _config.CalendarLookaheadDays = Math.Clamp(days, 0, 7);
+        _config.Save();
+        ReloadConfig(); // recreate the calendar sampler with the new window and refresh
+    }
+
+    /// <summary>Re-read config.json and re-apply everything live (feeds, colors, fade, offset).</summary>
+    private void ReloadConfig()
+    {
+        _config = WidgetConfig.Load();
+
+        _labelColor = ParseColor(_config.LabelColorHex, Color.Gray);
+        _accentColor = ParseColor(_config.AccentColorHex, Color.DeepSkyBlue);
+        _calendarColor = ParseColor(_config.CalendarColorHex, Color.Goldenrod);
+        _calLaunchUrl = _config.CalendarLaunchUrl;
+        _sampleTimer.Interval = Math.Max(250, _config.RefreshMs);
+
+        var old = _sampler;
+        _sampler = new MetricsSampler(_config);
+        old.Dispose();
+
+        // Reset agenda cycling; events repopulate on the next sample.
+        _calEventsKey = "";
+        _calEvents = Array.Empty<CalEvent>();
+        _calIndex = 0;
+        _calAlpha = 1f;
+        _calPhaseMs = 0;
+        _calTransitioning = false;
+        _calSwitched = false;
+
+        _lastDpi = 0;       // force a font rebuild (font family/size may have changed)
+        EnsureDocked();     // re-applies offset/DPI
+        OnSample();         // immediate refresh
+    }
+
+    /// <summary>Best-effort open of config.json in the default handler. The config now lives
+    /// at a known Documents path, so this is just a convenience — the user can always open
+    /// it by hand.</summary>
+    private static void OpenConfig()
     {
         try
         {
-            string dir = Path.GetDirectoryName(WidgetConfig.ConfigPath)!;
-            Directory.CreateDirectory(dir);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = dir,
-                UseShellExecute = true,
-            });
+            string path = WidgetConfig.ConfigPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            if (!File.Exists(path))
+                WidgetConfig.Load().Save();
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
         }
         catch
         {
-            // best-effort
+            // best-effort; the path is documented for manual editing
         }
     }
 
@@ -472,6 +722,7 @@ public sealed class WidgetForm : Form
     {
         _sampleTimer.Stop();
         _dockTimer.Stop();
+        _agendaTimer.Stop();
         _tray.Visible = false;
         Application.Exit();
     }
@@ -482,6 +733,7 @@ public sealed class WidgetForm : Form
         {
             _sampleTimer.Dispose();
             _dockTimer.Dispose();
+            _agendaTimer.Dispose();
             _sampler.Dispose();
             _tray.Dispose();
             _icon?.Dispose();

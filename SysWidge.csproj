@@ -14,11 +14,12 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\syswidge.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.2.0</Version>
+    <Version>0.3.8</Version>
     <Description>A low-key system widget that lives in the Windows 11 taskbar.</Description>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Ical.Net" Version="5.2.2" />
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
   </ItemGroup>
