@@ -8,6 +8,9 @@ public sealed record MetricsSnapshot
 {
     public double CpuPercent { get; init; }
 
+    public bool GpuTempAvailable { get; init; }
+    public double GpuTempC { get; init; }
+
     public double MemPercent { get; init; }
     public double MemUsedGb { get; init; }
     public double MemTotalGb { get; init; }

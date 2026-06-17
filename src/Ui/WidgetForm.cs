@@ -31,6 +31,7 @@ public sealed class WidgetForm : Form
     private readonly System.Windows.Forms.Timer _sampleTimer = new();
     private readonly System.Windows.Forms.Timer _dockTimer = new();
     private readonly NotifyIcon _tray;
+    private Icon? _icon;
 
     private TaskbarInfo? _taskbar;
     private uint _lastDpi;
@@ -218,7 +219,12 @@ public sealed class WidgetForm : Form
         };
 
         if (s.GpuLoadAvailable)
+        {
             list.Add(new Segment("GPU", $"{s.GpuPercent:0}%", "100%", LoadColor(s.GpuPercent)));
+            // GPU temp rides as a label-less segment that hugs the load reading (tight gap).
+            if (s.GpuTempAvailable)
+                list.Add(new Segment("", $"{s.GpuTempC:0}°", "199°", TempColor(s.GpuTempC)));
+        }
 
         list.Add(new Segment("MEM", $"{s.MemPercent:0}%", "100%", LoadColor(s.MemPercent)));
 
@@ -327,7 +333,12 @@ public sealed class WidgetForm : Form
             }
 
             x += labelW + slotW;
-            if (i < _segments.Count - 1) x += segGap;
+            if (i < _segments.Count - 1)
+            {
+                // A label-less follower (e.g. a temp) hugs its metric with a tighter gap.
+                bool nextIsFollower = _segments[i + 1].Label.Length == 0;
+                x += nextIsFollower ? Scale(7) : segGap;
+            }
         }
 
         return x + padX;
@@ -365,6 +376,14 @@ public sealed class WidgetForm : Form
         return Color.FromArgb(0xCF, 0xE8, 0xCF);
     }
 
+    /// <summary>Thermal coloring: calm under 70°C, amber to 85°C, red above.</summary>
+    private Color TempColor(double c)
+    {
+        if (c >= 85) return Color.FromArgb(0xFF, 0x6B, 0x6B);
+        if (c >= 70) return Color.FromArgb(0xFF, 0xC1, 0x07);
+        return Color.FromArgb(0xCF, 0xE8, 0xCF);
+    }
+
     private static string HumanRate(double bytesPerSec)
     {
         double kb = bytesPerSec / 1024.0;
@@ -393,7 +412,6 @@ public sealed class WidgetForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Re-dock to taskbar", null, (_, _) => { _lastDpi = 0; EnsureDocked(); });
-        menu.Items.Add("Open config folder", null, (_, _) => OpenConfigFolder());
 
         var startup = new ToolStripMenuItem("Start with Windows")
         {
@@ -403,12 +421,14 @@ public sealed class WidgetForm : Form
         startup.CheckedChanged += (_, _) => AutoStartManager.SetEnabled(startup.Checked);
         menu.Items.Add(startup);
 
+        menu.Items.Add("Open config folder", null, (_, _) => OpenConfigFolder());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
 
+        _icon = AppIcon.CreateTrayIcon(_accentColor);
         return new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _icon,
             Text = "SysWidge",
             Visible = true,
             ContextMenuStrip = menu,
@@ -449,6 +469,7 @@ public sealed class WidgetForm : Form
             _dockTimer.Dispose();
             _sampler.Dispose();
             _tray.Dispose();
+            _icon?.Dispose();
             _measure?.Dispose();
             _measureBmp?.Dispose();
             _valueFont?.Dispose();

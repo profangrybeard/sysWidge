@@ -23,6 +23,7 @@ public sealed class MetricsSampler : IDisposable
 
     private readonly string _systemDriveRoot;
     private readonly GpuSampler _gpu = new();
+    private readonly TempSampler _temp = new();
 
     public MetricsSampler()
     {
@@ -36,10 +37,13 @@ public sealed class MetricsSampler : IDisposable
         var (down, up) = SampleNetwork();
         var (freeGb, totalGb) = SampleDisk();
         var (gpuLoad, vramUsed, vramTotal) = _gpu.Sample();
+        var gpuTemp = _temp.Sample();
 
         return new MetricsSnapshot
         {
             CpuPercent = SampleCpu(),
+            GpuTempAvailable = gpuTemp.HasValue,
+            GpuTempC = gpuTemp ?? 0,
             MemPercent = memPct,
             MemUsedGb = memUsed,
             MemTotalGb = memTotal,
@@ -57,7 +61,11 @@ public sealed class MetricsSampler : IDisposable
         };
     }
 
-    public void Dispose() => _gpu.Dispose();
+    public void Dispose()
+    {
+        _gpu.Dispose();
+        _temp.Dispose();
+    }
 
     private double SampleCpu()
     {
