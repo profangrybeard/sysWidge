@@ -21,21 +21,13 @@ public sealed class MetricsSampler : IDisposable
     private long _prevRx, _prevTx, _prevNetTicks;
     private bool _hasNetBaseline;
 
-    private readonly string _systemDriveRoot;
     private readonly GpuSampler _gpu = new();
     private readonly TempSampler _temp = new();
-
-    public MetricsSampler()
-    {
-        _systemDriveRoot =
-            Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.System)) ?? "C:\\";
-    }
 
     public MetricsSnapshot Sample()
     {
         var (memPct, memUsed, memTotal) = SampleMemory();
         var (down, up) = SampleNetwork();
-        var (freeGb, totalGb) = SampleDisk();
         var (gpuLoad, vramUsed, vramTotal) = _gpu.Sample();
         var gpuTemp = _temp.Sample();
 
@@ -55,8 +47,7 @@ public sealed class MetricsSampler : IDisposable
             GpuName = _gpu.Name,
             NetDownBytesPerSec = down,
             NetUpBytesPerSec = up,
-            DiskFreeGb = freeGb,
-            DiskTotalGb = totalGb,
+            Disks = SampleDisks(),
             Time = DateTime.Now,
         };
     }
@@ -136,17 +127,24 @@ public sealed class MetricsSampler : IDisposable
         return (down, up);
     }
 
-    private (double freeGb, double totalGb) SampleDisk()
+    private static IReadOnlyList<DriveReading> SampleDisks()
     {
-        try
+        var list = new List<DriveReading>();
+        foreach (var d in DriveInfo.GetDrives())
         {
-            var di = new DriveInfo(_systemDriveRoot);
-            if (!di.IsReady) return (0, 0);
-            return (di.AvailableFreeSpace / BytesPerGb, di.TotalSize / BytesPerGb);
+            try
+            {
+                if (!d.IsReady) continue;
+                if (d.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+
+                string letter = d.Name.Length > 0 ? d.Name[..1] : "?";
+                list.Add(new DriveReading(letter, d.AvailableFreeSpace / BytesPerGb, d.TotalSize / BytesPerGb));
+            }
+            catch
+            {
+                // a drive can drop to not-ready between the check and the read — skip it
+            }
         }
-        catch
-        {
-            return (0, 0);
-        }
+        return list;
     }
 }

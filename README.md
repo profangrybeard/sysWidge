@@ -1,75 +1,106 @@
 # SysWidge
 
-A low-key system widget that lives **inside the Windows 11 taskbar** — the vacant
-left region next to a center-aligned Start. It replaces the unused stock Widgets
-button with an at-a-glance readout of what actually matters.
+A low-key system widget that floats over the vacant **left region of the Windows 11
+taskbar** (next to a center-aligned Start) and gives an at-a-glance readout of what
+actually matters — replacing the unused stock Widgets button's spot.
 
-## Status: Phase 1 (vertical slice)
+Transparent, click-through, and **never covers a fullscreen app** (e.g. an Unreal play
+session) — it hides itself whenever a fullscreen window is foreground, like the taskbar.
 
-Proves the hard part first — genuinely embedding a custom window into the taskbar —
-while showing the metrics that need **no elevation and no kernel driver**:
+## What it shows
 
-- **CPU** load (`GetSystemTimes` deltas)
-- **MEM** used % (`GlobalMemoryStatusEx`)
-- **NET** down/up throughput (`NetworkInterface` byte-count deltas)
-- **C:** free space (`DriveInfo`)
-- **Clock** (HH:mm)
+```
+CPU 4%   GPU 31% 56°   MEM 67%   VRAM 7.4/24G   ↓16K ↑4K   C: 359G   D: 1.8T
+```
 
-Updates once per second. No admin rights, no UAC prompt.
+| Metric | Source | Elevation |
+|---|---|---|
+| **CPU** load | `GetSystemTimes` deltas | none |
+| **GPU** load | PDH `GPU Engine … Utilization` | none |
+| **GPU** temp | LibreHardwareMonitor (AMD ADL) | none |
+| **MEM** used % | `GlobalMemoryStatusEx` | none |
+| **VRAM** used/total | PDH `GPU Adapter Memory` + DXGI | none |
+| **NET** ↓/↑ throughput | `NetworkInterface` byte deltas | none |
+| **Drives** free space | `DriveInfo` (all ready fixed/removable) | none |
+
+Updates once per second. **No admin, no UAC.** Each value sits in a fixed-width slot, so
+changing numbers never reflow the layout. Drives appear/disappear as they're plugged in.
+
+**CPU temperature is intentionally omitted:** it needs LibreHardwareMonitor's WinRing0
+kernel driver, which Windows blocks when Memory Integrity (HVCI) is enabled. GPU temp is
+unaffected (AMD's ADL path is userspace).
 
 ## How it works
 
-Windows 11 has no public API for putting content in the taskbar (deskbands and
-taskbar toolbars were removed). The proven technique — used by tools like
-TrafficMonitor — is to re-parent your own window into the taskbar window:
+Windows 11 has no public API for putting content in the taskbar (deskbands and taskbar
+toolbars were removed). True embedding via `SetParent` into `Shell_TrayWnd` is possible
+but on Windows 11 the taskbar's XAML layer composites *over* the child, hiding it. So
+instead SysWidge is a **top-level, top-most, per-pixel-alpha layered window** pinned over
+the taskbar's left region:
 
-1. `TaskbarLocator` enumerates `Shell_TrayWnd` windows and picks the one owned by
-   `explorer.exe` (others can exist from shell utilities).
-2. `WidgetForm` flips itself to `WS_CHILD` and calls `SetParent` into that window.
-3. A 1-second timer re-finds the taskbar and repositions, so it survives DPI
-   changes, resolution changes, and `explorer.exe` restarts.
+1. `TaskbarLocator` finds the `Shell_TrayWnd` owned by `explorer.exe`.
+2. `WidgetForm` positions a click-through (`WS_EX_TRANSPARENT`) layered window over its
+   left region and re-asserts top-most each tick.
+3. It hides while a fullscreen app is foreground, and re-docks on DPI / resolution
+   changes and `explorer.exe` restarts.
 
-Because it's a true child of the taskbar, it only appears when the taskbar does —
-it will **never** float over a fullscreen app (e.g. an Unreal play session).
+Rendering is a single immediate-mode pass (`RenderOrMeasure`) used for both measuring and
+painting an ARGB bitmap pushed via `UpdateLayeredWindow` — closer to a game draw loop than
+XAML.
 
-Rendering is a single immediate-mode layout pass (`RenderOrMeasure`) used for both
-measuring the width and painting — closer to a game draw loop than XAML.
-
-## Build & run
+## Build & run (dev)
 
 ```powershell
 dotnet build
 dotnet run
 ```
 
-Exit via the tray icon (right-click → Exit). A right-click menu there also offers
-**Re-dock to taskbar** and **Open config folder**.
+Right-click the tray icon for **Re-dock**, **Start with Windows**, **Open config folder**,
+and **Exit**.
+
+## Install (daily driver)
+
+Publish a Release build to a stable folder, then run it from there and enable **Start with
+Windows** so autostart records the installed path:
+
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained false -o "$env:LOCALAPPDATA\SysWidge"
+```
+
+> ⚠️ The `-r win-x64` matters: LibreHardwareMonitorLib ships its assembly as a
+> **RID-specific** runtime asset. A portable (no-RID) publish leaves it out of the folder
+> (the dev build only finds it via the NuGet cache), which breaks GPU temp on a clean
+> machine.
 
 ## Config
 
-First run writes `%APPDATA%\SysWidge\config.json`. Edit it (while the app is closed)
-to change colors, font size, refresh interval, and the left offset.
+First run writes `%APPDATA%\SysWidge\config.json`. Edit it (app closed) to change colors,
+font size, refresh interval, and the left offset (default clears the Widgets button).
 
-> Tip: turn off the stock **Widgets** button (Settings → Personalization → Taskbar)
-> so SysWidge owns the left region cleanly.
+> Tip: turn off the stock **Widgets** button (Settings → Personalization → Taskbar) so
+> SysWidge owns the left region cleanly.
 
 ## Roadmap
 
-- **Phase 1** *(here)* — taskbar embedding + no-driver metrics.
-- **Phase 1.1** — visual polish: taskbar-color blending, per-tile icons, click-to-expand detail popup.
-- **Phase 2** — CPU/GPU temps, GPU load/VRAM/power (LibreHardwareMonitor via a small
-  elevated helper so the UI stays un-elevated and embeds cleanly).
-- **Phase 3** — calendar/agenda tile (upcoming events), optional weather.
+- ✅ Floating taskbar overlay, transparent + click-through, fullscreen-aware.
+- ✅ No-driver metrics: CPU/GPU load, MEM, VRAM, network, multi-drive free space.
+- ✅ GPU temperature; fixed-width slots; tray icon; autostart; install.
+- ⏭️ Agenda tile (next calendar events), disk activity %, visual polish, a real app/exe icon.
+- ⏸️ CPU temperature — blocked by HVCI; revisit only via AIDA64/HWiNFO shared memory.
 
 ## Layout
 
 ```
 src/
-  Interop/      NativeMethods.cs   — thin Win32 P/Invoke surface
-  Metrics/      MetricsSnapshot.cs — immutable reading
-                MetricsSampler.cs  — no-elevation samplers (CPU/MEM/NET/disk)
-  Hosting/      TaskbarLocator.cs  — finds the real explorer taskbar
-  Config/       WidgetConfig.cs    — JSON settings in %APPDATA%
-  Ui/           WidgetForm.cs      — embedding + immediate-mode rendering + tray
-  Program.cs                       — entry point, single-instance guard
+  Interop/   NativeMethods.cs    — Win32 P/Invoke (windowing, layered, PDH, DXGI helpers)
+  Metrics/   MetricsSnapshot.cs  — immutable reading + DriveReading
+             MetricsSampler.cs   — CPU/MEM/NET/disk samplers
+             GpuSampler.cs       — GPU load (PDH) + VRAM (PDH/DXGI)
+             TempSampler.cs      — GPU temp (LibreHardwareMonitor)
+  Hosting/   TaskbarLocator.cs   — finds the real explorer taskbar
+  Config/    WidgetConfig.cs     — JSON settings in %APPDATA%
+             AutoStartManager.cs — per-user Run-key autostart
+  Ui/        WidgetForm.cs       — overlay docking + immediate-mode rendering + tray
+             AppIcon.cs          — code-drawn tray icon
+  Program.cs                     — entry point, single-instance guard
 ```

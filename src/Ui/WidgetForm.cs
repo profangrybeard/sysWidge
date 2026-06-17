@@ -237,7 +237,11 @@ public sealed class WidgetForm : Form
         // Independent ↓ / ↑ slots so neither rate nudges the other.
         list.Add(new Segment("↓", HumanRate(s.NetDownBytesPerSec), "999.9M", _accentColor));
         list.Add(new Segment("↑", HumanRate(s.NetUpBytesPerSec), "999.9M", _accentColor));
-        list.Add(new Segment("C:", $"{s.DiskFreeGb:0}G free", "9999G free", _accentColor));
+
+        // One slot per ready drive; D:/E: appear and disappear as they're plugged/unplugged.
+        foreach (var d in s.Disks)
+            list.Add(new Segment($"{d.Letter}:", DiskFree(d.FreeGb), "99.9T", _accentColor));
+
         return list;
     }
 
@@ -391,6 +395,10 @@ public sealed class WidgetForm : Form
         double mb = kb / 1024.0;
         return mb < 100 ? $"{mb:0.0}M" : $"{mb:0}M";
     }
+
+    /// <summary>Free space as "359G" or, past 1000 GiB, "1.8T".</summary>
+    private static string DiskFree(double gb)
+        => gb >= 1000 ? $"{gb / 1024.0:0.0}T" : $"{gb:0}G";
 
     private static Color ParseColor(string hex, Color fallback)
     {

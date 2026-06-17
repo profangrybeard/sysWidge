@@ -27,8 +27,12 @@ public sealed record MetricsSnapshot
     public double NetDownBytesPerSec { get; init; }
     public double NetUpBytesPerSec { get; init; }
 
-    public double DiskFreeGb { get; init; }
-    public double DiskTotalGb { get; init; }
+    /// <summary>Ready fixed/removable drives, in letter order. Re-enumerated each sample
+    /// so external/USB drives appear and disappear as they're plugged/unplugged.</summary>
+    public IReadOnlyList<DriveReading> Disks { get; init; } = Array.Empty<DriveReading>();
 
     public DateTime Time { get; init; } = DateTime.Now;
 }
+
+/// <summary>Free/total space for one drive (e.g. "C").</summary>
+public sealed record DriveReading(string Letter, double FreeGb, double TotalGb);
