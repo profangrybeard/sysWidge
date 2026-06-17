@@ -14,7 +14,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\syswidge.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Description>A low-key system widget that lives in the Windows 11 taskbar.</Description>
   </PropertyGroup>
 
@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="assets\tray.ico" LogicalName="SysWidge.tray.ico" />
+    <EmbeddedResource Include="assets\syswidge.ico" LogicalName="SysWidge.app.ico" />
   </ItemGroup>
 
   <!-- tools/ holds the standalone iconforge utility; keep it out of the app build

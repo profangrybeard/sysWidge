@@ -430,6 +430,7 @@ public sealed class WidgetForm : Form
         menu.Items.Add(startup);
 
         menu.Items.Add("Open config folder", null, (_, _) => OpenConfigFolder());
+        menu.Items.Add("About SysWidge", null, (_, _) => ShowAbout());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
 
@@ -441,6 +442,12 @@ public sealed class WidgetForm : Form
             Visible = true,
             ContextMenuStrip = menu,
         };
+    }
+
+    private static void ShowAbout()
+    {
+        using var about = new AboutForm();
+        about.ShowDialog();
     }
 
     private static void OpenConfigFolder()
