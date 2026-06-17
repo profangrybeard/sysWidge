@@ -109,7 +109,8 @@ assets/                          — generated app + tray .ico
 
 ## Goals / roadmap
 
-- Trim idle memory (~165 MB; likely LibreHardwareMonitor + DXGI sampling).
+- ~~Trim idle memory~~ — done (v0.3.9): bitmap/brush reuse, temp throttle,
+  workstation/non-concurrent GC, and `EmptyWorkingSet`; idle ~23 MB.
 - Disk activity % (we show free space only).
 - Optional weather tile; richer agenda (click an event → open that event).
 - A small settings UI (so config isn't hand-edited JSON).

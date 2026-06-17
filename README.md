@@ -121,7 +121,8 @@ ICS link a service gives you. URLs are secrets — they stay in this local file 
 - ✅ No-driver metrics: CPU/GPU load, GPU temp, MEM, VRAM, network, multi-drive free space.
 - ✅ Fixed-width slots, tray icon (mascot), autostart, install.
 - ✅ Calendar agenda: multi-feed, color-coded, cycling crossfade, live look-ahead, clickable.
-- ⏭️ Trim idle memory; disk activity %; weather; a settings UI; signed installer.
+- ✅ Idle memory trimmed (~165 MB → ~23 MB).
+- ⏭️ Disk activity %; weather; a settings UI; signed installer.
 - ⏸️ CPU temperature — blocked by HVCI; revisit only via AIDA64/HWiNFO shared memory.
 
 ## Layout
