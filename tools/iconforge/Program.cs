@@ -33,7 +33,7 @@ int hx = (int)(cl * work.Width), hy = (int)(ct * work.Height);
 var helmetBox = new Rectangle(hx, hy, (int)(cr * work.Width) - hx, (int)(cb * work.Height) - hy);
 using var helmet = Crop(work, helmetBox);
 using var helmetTrim = Crop(helmet, ContentBounds(helmet));
-using var traySquare = FitSquare(helmetTrim, 256);
+using var traySquare = FitSquare(helmetTrim, 256, fill: true); // stretch to fill -> bigger/stubbier
 traySquare.Save(Path.Combine(outDir, "_tray_preview.png"), ImageFormat.Png);
 SaveIco(trayIco, traySquare, new[] { 48, 32, 24, 16 });
 
@@ -143,7 +143,7 @@ static Bitmap Crop(Bitmap src, Rectangle r)
     return dst;
 }
 
-static Bitmap FitSquare(Bitmap src, int size)
+static Bitmap FitSquare(Bitmap src, int size, bool fill = false)
 {
     var dst = new Bitmap(size, size, PixelFormat.Format32bppArgb);
     using var g = Graphics.FromImage(dst);
@@ -151,9 +151,17 @@ static Bitmap FitSquare(Bitmap src, int size)
     g.PixelOffsetMode = PixelOffsetMode.HighQuality;
     g.Clear(Color.Transparent);
 
-    float scale = Math.Min((float)size / src.Width, (float)size / src.Height);
-    int dw = (int)(src.Width * scale), dh = (int)(src.Height * scale);
-    g.DrawImage(src, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    if (fill)
+    {
+        // Stretch to fill the whole square (non-uniform) — fattens a tall figure.
+        g.DrawImage(src, 0, 0, size, size);
+    }
+    else
+    {
+        float scale = Math.Min((float)size / src.Width, (float)size / src.Height);
+        int dw = (int)(src.Width * scale), dh = (int)(src.Height * scale);
+        g.DrawImage(src, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    }
     return dst;
 }
 
