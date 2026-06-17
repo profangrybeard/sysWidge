@@ -1,0 +1,25 @@
+## .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+publish/
+*.dll
+*.pdb
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## OS junk
+Thumbs.db
+desktop.ini
