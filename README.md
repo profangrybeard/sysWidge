@@ -82,6 +82,28 @@ dotnet publish -c Release -r win-x64 --self-contained false -o "$env:LOCALAPPDAT
 > (the dev build only finds it via the NuGet cache), which breaks GPU temp on a clean
 > machine.
 
+> **Prerequisite:** this build is *framework-dependent* — the target machine needs the
+> **.NET 9 Desktop Runtime** (`Microsoft.WindowsDesktop.App` 9.x). A dev box already has it;
+> a clean Windows install does not, and SysWidge won't start without it. Install it with:
+> ```powershell
+> winget install Microsoft.DotNet.DesktopRuntime.9
+> ```
+
+### Copy to a machine without .NET (self-contained)
+
+To hand SysWidge to a fresh machine with **no prerequisites**, publish self-contained — it
+bundles the .NET runtime into the folder, so it just runs (cost: the folder grows to
+~110 MB instead of ~7 MB):
+
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained true `
+  -p:DebugType=none -p:DebugSymbols=false -o ".\publish\SysWidge-selfcontained"
+```
+
+Copy the **whole folder** (not just `SysWidge.exe`) to the target, then run the exe.
+The exe is unsigned, so the first launch shows a SmartScreen prompt — *More info →
+Run anyway*.
+
 ## Config
 
 Config lives at **`Documents\SysWidge\config.json`** (may be OneDrive-redirected). It's
