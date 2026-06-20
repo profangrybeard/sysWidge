@@ -14,7 +14,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\syswidge.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.3.12</Version>
+    <Version>0.3.13</Version>
     <Description>A low-key system widget that lives in the Windows 11 taskbar.</Description>
 
     <!-- Workstation, non-concurrent GC keeps a small background widget's footprint low. -->

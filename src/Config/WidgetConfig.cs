@@ -8,8 +8,19 @@ namespace SysWidge.Config;
 /// </summary>
 public sealed class WidgetConfig
 {
-    /// <summary>Pixels from the left edge of the taskbar (device-independent; scaled by DPI at runtime).
-    /// Defaults to clearing the Windows 11 Widgets button with room to spare.</summary>
+    /// <summary>When true, auto-detect the Windows 11 left-docked taskbar content (Widgets
+    /// button with its weather pill, and the Search box) via UI Automation and dock just past
+    /// it — tightening to the left edge when nothing is there. When false (or if UIA fails),
+    /// the fixed <see cref="LeftOffsetPx"/> is used instead.</summary>
+    public bool AutoClearTaskbarLeft { get; set; } = true;
+
+    /// <summary>Gap (device-independent px; DPI-scaled) left after the taskbar's left-docked
+    /// content, or the left margin when there is none. Used only with <see cref="AutoClearTaskbarLeft"/>.</summary>
+    public int LeftGapPx { get; set; } = 8;
+
+    /// <summary>Fixed pixels from the left edge of the taskbar (device-independent; scaled by
+    /// DPI at runtime). Used when <see cref="AutoClearTaskbarLeft"/> is off, or as the fallback
+    /// if UI Automation can't measure the taskbar. 150 clears a typical Widgets button.</summary>
     public int LeftOffsetPx { get; set; } = 150;
 
     /// <summary>How often to resample + repaint, in milliseconds.</summary>

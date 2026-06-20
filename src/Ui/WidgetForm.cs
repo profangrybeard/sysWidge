@@ -47,6 +47,11 @@ public sealed class WidgetForm : Form
     private float _dpiScale = 1f;
     private bool _hiddenForFullscreen;
 
+    // Cached left-clearance (physical px past the Widgets/Search content); -1 = unknown ->
+    // fall back to the static offset. Refreshed on a throttle so UIA never runs per-frame.
+    private int _leftClearancePx = -1;
+    private int _clearanceTicks;
+
     // Current on-screen rect (physical pixels), recomputed when docking.
     private int _x, _y, _w = 220, _h = 48;
 
@@ -206,6 +211,7 @@ public sealed class WidgetForm : Form
             {
                 _lastDpi = tb.Dpi;
                 RebuildFonts(tb.Dpi);
+                _clearanceTicks = 0; // re-measure the taskbar at the new DPI
             }
 
             if (IsFullscreenAppForeground())
@@ -216,6 +222,7 @@ public sealed class WidgetForm : Form
 
             if (_hiddenForFullscreen) { _hiddenForFullscreen = false; Visible = true; }
 
+            UpdateLeftClearance(tb);
             Relayout();
         }
         catch
@@ -224,12 +231,26 @@ public sealed class WidgetForm : Form
         }
     }
 
+    /// <summary>
+    /// Refresh the cached left-clearance on a throttle (UIA is cross-process and must not run
+    /// per-frame). <see cref="_clearanceTicks"/> is reset to 0 to force an immediate re-measure
+    /// on re-dock / DPI change.
+    /// </summary>
+    private void UpdateLeftClearance(TaskbarInfo tb)
+    {
+        if (!_config.AutoClearTaskbarLeft) return;
+        if (_clearanceTicks-- > 0) return;
+
+        _leftClearancePx = TaskbarLeftProbe.Measure(tb.Handle, tb.Rect);
+        _clearanceTicks = 5; // ~every 5s on the 1s dock timer
+    }
+
     private void Relayout()
     {
         if (_taskbar is not { IsValid: true } tb) return;
 
         _h = tb.Rect.Height;
-        _x = tb.Rect.Left + (int)(_config.LeftOffsetPx * _dpiScale);
+        _x = tb.Rect.Left + LeftInsetPx();
         _y = tb.Rect.Top;
         // _w is set by the most recent measure in OnSample.
 
@@ -561,6 +582,16 @@ public sealed class WidgetForm : Form
     // ----------------------------------------------------------- helpers
 
     private int Scale(int px) => (int)Math.Round(px * _dpiScale);
+
+    /// <summary>Physical px to inset from the taskbar's left edge: past the auto-detected
+    /// Widgets/Search content plus a small gap (tight when there's none), or the fixed
+    /// offset when auto-clear is off or UIA couldn't measure.</summary>
+    private int LeftInsetPx()
+    {
+        if (_config.AutoClearTaskbarLeft && _leftClearancePx >= 0)
+            return _leftClearancePx + Scale(_config.LeftGapPx);
+        return (int)(_config.LeftOffsetPx * _dpiScale);
+    }
 
     private static string VersionString()
     {
