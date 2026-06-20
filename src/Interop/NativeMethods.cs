@@ -139,6 +139,56 @@ internal static class NativeMethods
     public const byte AC_SRC_OVER = 0x00;
     public const byte AC_SRC_ALPHA = 0x01;
 
+    // ------------------------------------------------ tray icon (Shell_NotifyIcon)
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATAW lpData);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    // Full (V3/V4) NOTIFYICONDATAW. Layout must match the native struct exactly; the
+    // ByValTStr arrays are sized in WCHARs (CharSet.Unicode), matching szTip[128] etc.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct NOTIFYICONDATAW
+    {
+        public int cbSize;
+        public IntPtr hWnd;
+        public int uID;
+        public uint uFlags;
+        public int uCallbackMessage;
+        public IntPtr hIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szTip;
+        public uint dwState;
+        public uint dwStateMask;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string szInfo;
+        public uint uVersion;   // union with uTimeout
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string szInfoTitle;
+        public uint dwInfoFlags;
+        public Guid guidItem;
+        public IntPtr hBalloonIcon;
+    }
+
+    public const uint NIM_ADD = 0x0;
+    public const uint NIM_MODIFY = 0x1;
+    public const uint NIM_DELETE = 0x2;
+    public const uint NIM_SETVERSION = 0x4;
+
+    public const uint NIF_MESSAGE = 0x01;
+    public const uint NIF_ICON = 0x02;
+    public const uint NIF_TIP = 0x04;
+    public const uint NIF_GUID = 0x20;
+    public const uint NIF_SHOWTIP = 0x80;
+
+    public const uint NOTIFYICON_VERSION_4 = 4;
+
+    public const int WM_APP = 0x8000;
+    public const int WM_CONTEXTMENU = 0x007B;
+    public const int NIN_SELECT = 0x0400;       // WM_USER + 0
+    public const int NIN_KEYSELECT = 0x0401;    // WM_USER + 1
+
     // --------------------------------------------------- PDH (perf counters: GPU load)
 
     [DllImport("pdh.dll", CharSet = CharSet.Unicode)]

@@ -35,8 +35,12 @@ public sealed class WidgetForm : Form
     private MetricsSampler _sampler;
     private readonly System.Windows.Forms.Timer _sampleTimer = new();
     private readonly System.Windows.Forms.Timer _dockTimer = new();
-    private readonly NotifyIcon _tray;
+    private readonly TrayIcon _tray;
     private Icon? _icon;
+
+    // Stable identity for the tray icon so Windows 11 remembers the user's "show in
+    // taskbar" choice across updates (a fresh .exe would otherwise revert to overflow).
+    private static readonly Guid TrayGuid = new("9F2B7A14-3C6E-4D58-AE10-5B8C2D4F6071");
 
     private TaskbarInfo? _taskbar;
     private uint _lastDpi;
@@ -628,7 +632,7 @@ public sealed class WidgetForm : Form
 
     // ----------------------------------------------------------- tray
 
-    private NotifyIcon BuildTray()
+    private TrayIcon BuildTray()
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Re-dock to taskbar", null, (_, _) => { _lastDpi = 0; EnsureDocked(); });
@@ -649,13 +653,7 @@ public sealed class WidgetForm : Form
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
 
         _icon = AppIcon.CreateTrayIcon(_accentColor);
-        return new NotifyIcon
-        {
-            Icon = _icon,
-            Text = $"SysWidge v{VersionString()}",
-            Visible = true,
-            ContextMenuStrip = menu,
-        };
+        return new TrayIcon(_icon, $"SysWidge v{VersionString()}", menu, TrayGuid);
     }
 
     private static void ShowAbout()
@@ -744,7 +742,7 @@ public sealed class WidgetForm : Form
         _sampleTimer.Stop();
         _dockTimer.Stop();
         _agendaTimer.Stop();
-        _tray.Visible = false;
+        _tray.Hide();
         Application.Exit();
     }
 
